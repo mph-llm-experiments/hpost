@@ -1,0 +1,33 @@
+# hpost configuration file
+# Copy this to ~/.config/hpost/config.yml and customize
+
+# Directory where Hugo posts are stored
+posts_dir: ~/blog/content/posts/
+
+# Preferred editor (use 'default' for system default, or specify a command)
+# Examples:
+#   editor: default           # Uses macOS open, Linux xdg-open, etc.
+#   editor: code              # VS Code
+#   editor: vim               # Vim
+#   editor: emacs             # Emacs
+#   editor: subl              # Sublime Text
+editor: default
+
+# Preferred preview tool (use 'default' to auto-detect, or specify a command)
+# Examples:
+#   preview: default          # Auto-detects: glow, mdless, bat, less, cat
+#   preview: glow             # Glow markdown viewer
+#   preview: mdless           # mdless markdown viewer
+#   preview: bat              # bat syntax highlighter
+#   preview: less             # Standard less pager
+preview: default
+
+# Default tags to apply to all posts (can be overridden with -T)
+default_tags: []
+
+# Default categories to apply to all posts (can be overridden with -c)
+default_category: []
+
+# Default draft status for new posts (can be overridden with -p/--publish or --draft)
+# true = posts created as drafts, false = posts created as published
+default_draft: true

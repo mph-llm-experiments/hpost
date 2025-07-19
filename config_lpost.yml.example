@@ -1,0 +1,15 @@
+# lpost Configuration Example
+# Save this as ~/.config/lpost/config.yml
+
+# Path to your lmno.md file (can use ~ for home directory)
+posts_file: ~/lmno.md
+
+# Editor to use for editing posts
+# Supports line positioning for: vim, nvim, hx, helix, code, subl, sublime, emacs, emacsclient, nano, micro, atom
+# Use 'default' to use system default file opener
+editor: hx
+
+# Preview tool for viewing posts
+# Common options: glow, mdless, bat, less, cat
+# Use 'default' to try common tools in order: glow -> mdless -> bat -> less -> cat
+preview: glow

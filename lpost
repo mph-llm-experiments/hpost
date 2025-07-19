@@ -1,0 +1,480 @@
+#!/usr/bin/env ruby
+
+# lpost - lmno.md Post Creator
+# A command-line tool for creating and managing posts in lmno.md format
+
+require 'optparse'
+require 'date'
+require 'yaml'
+require 'fileutils'
+
+class LPost
+  DEFAULT_CONFIG = {
+    'posts_file' => '~/lmno.md',
+    'editor' => ENV['EDITOR'] || 'default',
+    'preview' => ENV['EDITOR'] || 'default'
+  }.freeze
+
+  attr_reader :options, :config
+
+  def initialize
+    @options = {}
+    @config = load_config
+    @state_file = File.expand_path('~/.config/lpost/.state')
+  end
+
+  def run(args)
+    parse_options(args)
+    
+    # Handle --clear-filters
+    if @options[:clear_filters]
+      File.delete(@state_file) if File.exist?(@state_file)
+      puts "Filters cleared."
+      return
+    end
+    
+    load_state
+    
+    case @options[:command]
+    when 'list'
+      # Save state when listing (or clear it if no filter)
+      save_state
+      list_posts(@options[:count] || 10, @options[:filter_keyword])
+    when 'edit'
+      edit_post(@options[:id], @options[:filter_keyword])
+    when 'preview'
+      preview_post(@options[:id], @options[:filter_keyword])
+    else
+      create_post
+    end
+  end
+
+  private
+
+  def load_config
+    config_path = File.expand_path('~/.config/lpost/config.yml')
+    
+    if File.exist?(config_path)
+      user_config = YAML.load_file(config_path)
+      DEFAULT_CONFIG.merge(user_config)
+    else
+      # Check environment variable for posts file
+      if ENV['LPOST_FILE']
+        DEFAULT_CONFIG.merge('posts_file' => ENV['LPOST_FILE'])
+      else
+        DEFAULT_CONFIG
+      end
+    end
+  rescue => e
+    puts "Warning: Error loading config file: #{e.message}"
+    puts "Using default configuration."
+    DEFAULT_CONFIG
+  end
+
+  def load_state
+    return unless File.exist?(@state_file)
+    
+    state = YAML.load_file(@state_file)
+    
+    # Only load state for edit/preview commands if no explicit filter provided
+    if ['edit', 'preview'].include?(@options[:command])
+      @options[:filter_keyword] ||= state['filter_keyword']
+    end
+  rescue => e
+    # Silently ignore state loading errors
+  end
+
+  def save_state
+    state_dir = File.dirname(@state_file)
+    FileUtils.mkdir_p(state_dir) unless Dir.exist?(state_dir)
+    
+    if @options[:filter_keyword]
+      # Save current filter state
+      state = {
+        'filter_keyword' => @options[:filter_keyword]
+      }
+      File.write(@state_file, state.to_yaml)
+    else
+      # Clear state when listing with no filters
+      File.delete(@state_file) if File.exist?(@state_file)
+    end
+  rescue => e
+    # Silently ignore state saving errors
+  end
+
+  def parse_options(args)
+    OptionParser.new do |parser|
+      parser.banner = "Usage: lpost [options] [command]"
+      parser.separator ""
+      parser.separator "Commands:"
+      parser.separator "  create (default)  Create a new post"
+      parser.separator "  list [count]      List recent posts (default: 10)"
+      parser.separator "  edit <id>         Edit a post by ID (1-based index from list)"
+      parser.separator "  preview <id>      Preview a post by ID (1-based index from list)"
+      parser.separator ""
+      parser.separator "Options:"
+
+      parser.on("-t", "--title TITLE", "The title of the post") do |o|
+        @options[:title] = o
+      end
+
+      parser.on("-d", "--daily", "Create a daily notes post") do
+        @options[:type] = 'daily'
+        @options[:title] = "Daily notes for #{Date.today.strftime('%Y-%m-%d')}"
+      end
+
+      parser.on("-h", "--help", "Show this help message") do
+        puts parser
+        exit(0)
+      end
+
+
+      parser.on("-k", "--keyword KEYWORD", "Filter list by keyword in title or content") do |keyword|
+        @options[:filter_keyword] = keyword
+      end
+
+      parser.on("--clear-filters", "Clear saved filter state") do
+        @options[:clear_filters] = true
+      end
+    end.parse!(args)
+
+    # Handle commands
+    if args.any?
+      command = args.shift
+      case command
+      when 'list'
+        @options[:command] = 'list'
+        @options[:count] = args.first.to_i if args.first
+      when 'edit'
+        @options[:command] = 'edit'
+        @options[:id] = args.first.to_i if args.first
+      when 'preview'
+        @options[:command] = 'preview'
+        @options[:id] = args.first.to_i if args.first
+      else
+        # If not a recognized command, treat it as part of options
+        args.unshift(command)
+      end
+    end
+  end
+
+  def create_post
+    validate_create_options!
+    
+    posts_file = File.expand_path(@config['posts_file'])
+    
+    # Ensure posts file exists
+    unless File.exist?(posts_file)
+      puts "Posts file not found: #{posts_file}"
+      print "Create it? (y/n): "
+      response = gets.chomp.downcase
+      
+      if response == 'y'
+        File.write(posts_file, "")
+        puts "Created file: #{posts_file}"
+      else
+        puts "Exiting without creating post."
+        exit 1
+      end
+    end
+    
+    date = Date.today.strftime("%Y-%m-%d")
+    day_name = Date.today.strftime("%a")
+    
+    # Create the header
+    header = if @options[:type] == 'daily'
+      "# [#{date} #{day_name}] #{@options[:title]}"
+    else
+      "# [#{date} #{day_name}] #{@options[:title]}"
+    end
+    
+    # Read existing content
+    existing_content = File.exist?(posts_file) ? File.read(posts_file) : ""
+    
+    # Create new post content (header + blank lines + existing content)
+    new_content = if existing_content.empty?
+      "#{header}\n\n"
+    else
+      "#{header}\n\n\n\n#{existing_content}"
+    end
+    
+    # Write the new content
+    File.write(posts_file, new_content)
+    puts "Created post: #{header}"
+    
+    # Open editor at the correct line (after the header)
+    open_file_at_line(posts_file, 3)
+  end
+
+  def list_posts(count, filter_keyword = nil)
+    posts_file = File.expand_path(@config['posts_file'])
+    
+    unless File.exist?(posts_file)
+      puts "Error: Posts file not found: #{posts_file}"
+      exit 1
+    end
+    
+    posts = parse_posts_from_file(posts_file)
+    
+    # Filter by keyword if specified
+    if filter_keyword
+      posts = posts.select do |post|
+        post[:title].downcase.include?(filter_keyword.downcase) ||
+        post[:content].downcase.include?(filter_keyword.downcase)
+      end
+    end
+    
+    # Sort by date (newest first)
+    posts = posts.sort_by { |p| p[:date] }.reverse.take(count)
+    
+    if posts.empty?
+      if filter_keyword
+        puts "No posts found with keyword '#{filter_keyword}' in #{posts_file}"
+      else
+        puts "No posts found in #{posts_file}"
+      end
+      return
+    end
+    
+    # Build description
+    description_parts = ["Recent posts"]
+    if filter_keyword
+      description_parts << "with keyword '#{filter_keyword}'"
+      # Check if filter came from state
+      if File.exist?(@state_file) && !@options.key?(:filter_keyword)
+        description_parts << "(filter from previous list)"
+      end
+    end
+    description_parts << "(sorted by date, newest first)"
+    
+    puts description_parts.join(" ") + ":"
+    puts
+    
+    posts.each_with_index do |post, index|
+      display_date = post[:date].strftime("%Y-%m-%d")
+      printf "%3d. [%s] %s\n", index + 1, display_date, post[:title]
+    end
+  end
+
+  def edit_post(id, filter_keyword = nil)
+    unless id && id > 0
+      puts "Error: Please provide a valid post ID (use 'lpost list' to see posts)"
+      exit 1
+    end
+    
+    posts_file = File.expand_path(@config['posts_file'])
+    posts = parse_posts_from_file(posts_file)
+    
+    # Filter by keyword if specified
+    if filter_keyword
+      posts = posts.select do |post|
+        post[:title].downcase.include?(filter_keyword.downcase) ||
+        post[:content].downcase.include?(filter_keyword.downcase)
+      end
+    end
+    
+    posts = posts.sort_by { |p| p[:date] }.reverse
+    
+    if posts.empty?
+      if filter_keyword
+        puts "Error: No posts found with keyword '#{filter_keyword}'"
+      else
+        puts "Error: No posts found"
+      end
+      exit 1
+    end
+    
+    if id > posts.length
+      puts "Error: Post ID #{id} not found (only #{posts.length} posts available)"
+      puts "Hint: Use 'lpost list#{filter_keyword ? " --keyword #{filter_keyword}" : ""}' to see available posts"
+      exit 1
+    end
+    
+    post = posts[id - 1]
+    puts "Editing: #{post[:title]} (line #{post[:line_number]})"
+    open_file_at_line(posts_file, post[:line_number])
+  end
+
+  def preview_post(id, filter_keyword = nil)
+    unless id && id > 0
+      puts "Error: Please provide a valid post ID (use 'lpost list' to see posts)"
+      exit 1
+    end
+    
+    posts_file = File.expand_path(@config['posts_file'])
+    posts = parse_posts_from_file(posts_file)
+    
+    # Filter by keyword if specified
+    if filter_keyword
+      posts = posts.select do |post|
+        post[:title].downcase.include?(filter_keyword.downcase) ||
+        post[:content].downcase.include?(filter_keyword.downcase)
+      end
+    end
+    
+    posts = posts.sort_by { |p| p[:date] }.reverse
+    
+    if posts.empty?
+      if filter_keyword
+        puts "Error: No posts found with keyword '#{filter_keyword}'"
+      else
+        puts "Error: No posts found"
+      end
+      exit 1
+    end
+    
+    if id > posts.length
+      puts "Error: Post ID #{id} not found (only #{posts.length} posts available)"
+      puts "Hint: Use 'lpost list#{filter_keyword ? " --keyword #{filter_keyword}" : ""}' to see available posts"
+      exit 1
+    end
+    
+    post = posts[id - 1]
+    puts "Previewing: #{post[:title]}"
+    
+    # Create a temporary file with just this post's content
+    temp_file = "/tmp/lpost_preview_#{Process.pid}.md"
+    header_and_content = "# #{post[:title]}\n\n#{post[:content]}"
+    File.write(temp_file, header_and_content)
+    
+    begin
+      preview_file(temp_file)
+    ensure
+      File.delete(temp_file) if File.exist?(temp_file)
+    end
+  end
+
+  def parse_posts_from_file(file_path)
+    content = File.read(file_path)
+    lines = content.lines
+    posts = []
+    current_post = nil
+    
+    lines.each_with_index do |line, line_index|
+      if line =~ /^# \[(\d{4}-\d{2}-\d{2})(?: \w+)?\] (.+)$/
+        # Save previous post if it exists
+        if current_post
+          posts << current_post
+        end
+        
+        # Start new post
+        date_str = $1
+        title = $2.strip
+        
+        current_post = {
+          date: Date.parse(date_str),
+          title: title,
+          line_number: line_index + 1,
+          content: ""
+        }
+      elsif current_post
+        # Add line to current post content
+        current_post[:content] += line
+      end
+    end
+    
+    # Don't forget the last post
+    if current_post
+      posts << current_post
+    end
+    
+    posts
+  rescue => e
+    puts "Error parsing posts: #{e.message}"
+    []
+  end
+
+  def validate_create_options!
+    unless @options[:title]
+      puts "Error: Title is required (use -t or --title)"
+      puts "Use 'lpost --help' for usage information"
+      exit 1
+    end
+  end
+
+  def open_file_at_line(path, line_number)
+    editor = @config['editor']
+    
+    if editor && editor != 'default'
+      # Use configured editor with line number if possible
+      if editor.include?('vim') || editor.include?('nvim')
+        system(editor, "+#{line_number}", path)
+      elsif editor.include?('hx') || editor.include?('helix')
+        system(editor, "#{path}:#{line_number}")
+      elsif editor.include?('code')
+        system(editor, "-g", "#{path}:#{line_number}")
+      elsif editor.include?('subl') || editor.include?('sublime')
+        system(editor, "#{path}:#{line_number}")
+      elsif editor.include?('emacs')
+        system(editor, "-nw", "+#{line_number}", path)
+      elsif editor.include?('emacsclient')
+        system(editor, "-nw", "+#{line_number}", path)
+      elsif editor.include?('nano')
+        system(editor, "+#{line_number}", path)
+      elsif editor.include?('micro')
+        system(editor, "+#{line_number}", path)
+      elsif editor.include?('atom')
+        system(editor, "#{path}:#{line_number}")
+      else
+        # Fallback: just open the file
+        cmd_parts = editor.split(' ')
+        system(*cmd_parts, path)
+      end
+    else
+      # Use platform-specific open command
+      case RUBY_PLATFORM
+      when /darwin/
+        system('open', path)
+      when /linux/
+        system('xdg-open', path) || system("${EDITOR:-vi}", "+#{line_number}", path)
+      when /mingw|mswin|cygwin/
+        system('start', path)
+      else
+        puts "Unable to open file automatically."
+        puts "Please open: #{path} at line #{line_number}"
+        puts "Set your preferred editor in ~/.config/lpost/config.yml"
+      end
+    end
+  end
+
+  def preview_file(path)
+    preview_cmd = @config['preview']
+    
+    if preview_cmd && preview_cmd != 'default'
+      # Use configured preview tool - split on spaces to handle arguments
+      cmd_parts = preview_cmd.split(' ')
+      system(*cmd_parts, path)
+    else
+      # Try common preview tools in order of preference
+      preview_tools = [
+        ['glow', '-p'],      # Glow with pager
+        ['mdless'],          # mdless
+        ['bat', '--style=plain'],  # bat with plain style
+        ['less'],            # fallback to less
+        ['cat']              # ultimate fallback
+      ]
+      
+      tool_found = false
+      preview_tools.each do |tool_parts|
+        tool = tool_parts.first
+        if system("which #{tool} > /dev/null 2>&1")
+          system(*tool_parts, path)
+          tool_found = true
+          break
+        end
+      end
+      
+      unless tool_found
+        # Last resort: use editor
+        puts "No preview tool found. Using editor..."
+        open_file_at_line(path, 1)
+      end
+    end
+  end
+end
+
+# Run the application
+if __FILE__ == $0
+  lpost = LPost.new
+  lpost.run(ARGV)
+end

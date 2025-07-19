@@ -24,7 +24,8 @@ class HPost
     'editor' => ENV['EDITOR'] || 'default',
     'preview' => ENV['EDITOR'] || 'default',
     'default_tags' => [],
-    'default_category' => []
+    'default_category' => [],
+    'default_draft' => true
   }.freeze
 
   attr_reader :options, :config
@@ -151,6 +152,14 @@ class HPost
         @options[:title] = "Daily notes for #{Date.today.strftime('%Y-%m-%d')}"
       end
 
+      parser.on("-p", "--publish", "Create post as published (not draft)") do
+        @options[:draft] = false
+      end
+
+      parser.on("--draft", "Create post as draft (default)") do
+        @options[:draft] = true
+      end
+
       parser.on("-h", "--help", "Show this help message") do
         puts parser
         exit(0)
@@ -213,10 +222,17 @@ class HPost
       return
     end
     
+    # Determine draft status: command line option > config > default (true)
+    draft_status = if @options.key?(:draft)
+      @options[:draft]
+    else
+      @config['default_draft']
+    end
+
     front_matter = {
       'title' => @options[:title],
       'date' => long_date,
-      'draft' => true,
+      'draft' => draft_status,
       'categories' => @options[:category] || @config['default_category'],
       'tags' => @options[:tags] || @config['default_tags'],
       'summary' => @options[:summary] || ""
