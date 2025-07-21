@@ -10,6 +10,7 @@ A command-line tool for creating and managing posts in lmno.md format - a monoli
 - Preview individual posts with markdown viewers (glow, mdless, bat, etc.)
 - Filter post lists by keyword (searches titles and content)
 - Daily notes format
+- **Publish to lmno.lol** with authentication and confirmation
 - Cross-platform file opening support
 - Configurable via environment variables or config file
 - Support for various editors with line positioning
@@ -40,6 +41,13 @@ Create `~/.config/lpost/config.yml`:
 posts_file: ~/lmno.md
 editor: hx # or vim, emacs, code, subl, etc.
 preview: glow # or mdless, bat, default, etc.
+
+# lmno.lol publishing configuration (optional)
+lmno:
+  email: your-email@example.com
+  api_key: your-api-key-here
+  blog_name: your-blog-name
+  url: https://lmno.lol
 ```
 
 ## Usage
@@ -103,12 +111,31 @@ lpost list --keyword journal
 lpost preview 2  # Previews 2nd journal-related post
 ```
 
+### Publish to lmno.lol
+
+**Requirements**: Configure the `lmno` section in your config file with your credentials.
+
+```bash
+# Publish your entire blog to lmno.lol
+lpost --publish
+```
+
+This will:
+1. Show file size and destination blog
+2. Require explicit Y/n confirmation  
+3. Authenticate with lmno.lol using your credentials
+4. Upload your entire posts file as the blog content
+5. Provide the blog URL upon success
+
+**Security**: Your API key is stored in your local config file. The publish command requires manual confirmation each time.
+
 ## Options
 
 - `-t, --title TITLE` - Post title (required for create)
 - `-d, --daily` - Create a daily notes post
 - `-k, --keyword KEYWORD` - Filter list by keyword in title or content
 - `--clear-filters` - Clear saved filter state
+- `--publish` - Publish blog to lmno.lol (requires Y/n confirmation)
 - `-h, --help` - Show help message
 
 ## Editor Support
@@ -189,6 +216,9 @@ lpost preview 2               # Previews 2nd journal post
 # Override saved filter explicitly
 lpost list --keyword ruby     # Sets ruby filter
 lpost edit 1 --keyword python # Explicitly uses python filter instead
+
+# Publish your blog
+lpost --publish                # Shows confirmation prompt
 ```
 
 ## Differences from hpost
